@@ -38,18 +38,30 @@ case $ARCH in
     ;;
 esac
 
+# Region/mirror selection: "./build.sh cn" (or REGION=cn) uses China-mirror
+# Dockerfiles (faster apt/apk/Go module downloads inside China). Default is the
+# global Dockerfiles.
+REGION="${1:-${REGION:-global}}"
+if [ "$REGION" = "cn" ]; then
+    UIDOCKERFILE="Dockerfile.cn"
+    BEEDOCKERFILE="Dockerfile-beego.cn"
+else
+    UIDOCKERFILE="Dockerfile"
+    BEEDOCKERFILE="Dockerfile-beego"
+fi
+
 # Benchmarking the start time get
 start_time=$(date +%s)
 
-printf "\033[1;34mBuilding for\033[0m $ARCH ($PLATFORM) with: \n  \033[1;34mUI Image:\033[0m $UIIMAGE \n  \033[1;34mBeeGo Image:\033[0m $BEEIMAGE \n"
-# Update Dockerfile based on platform
-sed -i "s#FROM DEFINE-YOUR-ARCH#$UIIMAGE#g" Dockerfile
-# Update Dockerfile-beego based on platform
-sed -i "s#FROM DEFINE-YOUR-ARCH#$BEEIMAGE#g" Dockerfile-beego
+printf "\033[1;34mBuilding for\033[0m $ARCH ($PLATFORM) [region: $REGION] with: \n  \033[1;34mUI Image:\033[0m $UIIMAGE \n  \033[1;34mBeeGo Image:\033[0m $BEEIMAGE \n"
+# Update UI Dockerfile based on platform
+sed -i "s#FROM DEFINE-YOUR-ARCH#$UIIMAGE#g" "$UIDOCKERFILE"
+# Update BeeGo Dockerfile based on platform
+sed -i "s#FROM DEFINE-YOUR-ARCH#$BEEIMAGE#g" "$BEEDOCKERFILE"
 printf "Dockerfiles updated \n\033[1;34mBuilding Golang and Bee enviroment.\033[0m\n"
 
 # Build golang & bee environment
-docker build --progress=plain --platform=$PLATFORM -f Dockerfile-beego -t local/beego-v8 -t local/beego-v8:latest .
+docker build --progress=plain --platform=$PLATFORM -f "$BEEDOCKERFILE" -t local/beego-v8 -t local/beego-v8:latest .
 printf "\033[1;34mBuilding OpenVPN-UI and qrencode binaries.\033[0m\n"
 
 # Run a beego-v8 container to build qrencode and execute bee pack
@@ -80,7 +92,7 @@ cp -f ../$QRFILE ./
 cp -f ../$UIFILE ./
 
 # Build openvpn-ui image
-docker build -t local/openvpn-ui .
+docker build -f "$UIDOCKERFILE" -t local/openvpn-ui .
 rm -f $UIFILE; rm -f $(basename $UIFILE); #rm -f $QRFILE;
 printf "\033[1;34mAll done.\033[0m\n"
 

@@ -1,0 +1,38 @@
+# China-mirror variant of Dockerfile-beego. Selected by: ./build.sh cn
+# Same as Dockerfile-beego, but uses China mirrors for Debian apt and Go modules
+# to avoid slow downloads from deb.debian.org / proxy.golang.org.
+# armv5l raspberry pi 1/zero 32bit: FROM arm32v5/golang:1.20, armv7l raspberry pi 2/3/4 32bit: FROM arm32v7/golang:1.20
+# AMD64 64bit: golang:1.20, armv8l raspberry pi 3/4 64bit: FROM arm64v8/golang:1.20
+FROM DEFINE-YOUR-ARCH
+
+LABEL maintainer="Mr.Philipp <d3vilh@github.com>"
+
+# Use China mirrors. bookworm images ship the deb822 sources file; fall back to
+# the classic sources.list if it is not present.
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list
+ENV GOPROXY=https://goproxy.cn,direct
+
+# Set the working directory to /beego and installing dependencies
+WORKDIR /beego
+RUN apt-get update && apt-get install git musl-tools -y
+
+# Enable go modules
+ENV GO111MODULE=on
+ENV CGO_ENABLED=1
+
+# Copy the go.mod and go.sum files to the container
+COPY go.mod go.sum ./
+
+# Download the dependencies
+RUN go mod download
+
+# Install the beego and bee packages
+RUN go install github.com/beego/bee/v2@develop
+
+# Setting working directory to /app and getting qrencode from github
+WORKDIR /app
+RUN git clone https://github.com/d3vilh/qrencode
+
+# Set the working directory to /
+WORKDIR /
