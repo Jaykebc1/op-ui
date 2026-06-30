@@ -102,6 +102,14 @@ func init() {
 				AllowHTTPMethods: []string{"get"},
 				Params:           nil})
 
+	web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:CertificatesController"] =
+		append(web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:CertificatesController"],
+			web.ControllerComments{
+				Method:           "SendEmail",
+				Router:           `/certificates/sendemail/:key/:serial/:tfaname`,
+				AllowHTTPMethods: []string{"get"},
+				Params:           nil})
+
 	web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:DangerController"] =
 		append(web.GlobalControllerRouter["github.com/d3vilh/openvpn-ui/controllers:DangerController"],
 			web.ControllerComments{

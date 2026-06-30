@@ -220,6 +220,108 @@ func (c *CertificatesController) Renew() {
 	c.showCerts()
 }
 
+// @router /certificates/sendemail/:key/:serial/:tfaname [get]
+func (c *CertificatesController) SendEmail() {
+	c.TplName = "certificates.html"
+	flash := web.NewFlash()
+	name := c.GetString(":key")
+	tfaname := c.GetString(":tfaname")
+
+	// Look up the certificate to find the recipient email and verify state.
+	indexPath := filepath.Join(state.GlobalCfg.OVConfigPath, "pki/index.txt")
+	certs, err := lib.ReadCerts(indexPath)
+	if err != nil {
+		logs.Error(err)
+		flash.Error("Could not read certificates: " + err.Error())
+		flash.Store(&c.Controller)
+		c.showCerts()
+		return
+	}
+	var found *lib.Cert
+	for _, v := range certs {
+		if v.Details.Name == name {
+			found = v
+			break
+		}
+	}
+	if found == nil {
+		flash.Error("Certificate \"" + name + "\" not found")
+		flash.Store(&c.Controller)
+		c.showCerts()
+		return
+	}
+
+	has2FA := tfaname != "" && tfaname != "none"
+	if found.EntryType != "V" || !has2FA {
+		flash.Error("Email can only be sent for valid certificates with 2FA enabled")
+		flash.Store(&c.Controller)
+		c.showCerts()
+		return
+	}
+	if found.Details.Email == "" {
+		flash.Error("No email is registered for user \"" + name + "\"")
+		flash.Store(&c.Controller)
+		c.showCerts()
+		return
+	}
+
+	smtpCfg, err := lib.LoadSMTPConfig()
+	if err != nil {
+		logs.Error(err)
+		flash.Error(err.Error())
+		flash.Store(&c.Controller)
+		c.showCerts()
+		return
+	}
+
+	// Regenerate the .ovpn so the attachment is always current.
+	keysPath := filepath.Join(state.GlobalCfg.OVConfigPath, "pki/issued")
+	ovpnPath, err := c.saveClientConfig(keysPath, name)
+	if err != nil {
+		logs.Error(err)
+		flash.Error("Could not generate .ovpn: " + err.Error())
+		flash.Store(&c.Controller)
+		c.showCerts()
+		return
+	}
+
+	// Recover the OTP secret and rebuild the otpauth URL.
+	issuer := ""
+	ovc := models.OVClientConfig{Profile: "default"}
+	if err := ovc.Read("Profile"); err == nil {
+		issuer = ovc.TFAIssuer
+	}
+	secret, otpURL, err := lib.GetOATHSecret(state.GlobalCfg.OVConfigPath, tfaname, issuer)
+	if err != nil {
+		logs.Error(err)
+		flash.Error("Could not read 2FA secret: " + err.Error())
+		flash.Store(&c.Controller)
+		c.showCerts()
+		return
+	}
+
+	mail := lib.ClientMail{
+		To:         found.Details.Email,
+		ClientName: name,
+		OVPNPath:   ovpnPath,
+		Has2FA:     true,
+		QRPath:     filepath.Join(state.GlobalCfg.OVConfigPath, "clients", name+".png"),
+		OTPSecret:  secret,
+		OTPAuthURL: otpURL,
+	}
+	if err := lib.SendClientConfigEmail(smtpCfg, mail); err != nil {
+		logs.Error(err)
+		flash.Error("Failed to send email: " + err.Error())
+		flash.Store(&c.Controller)
+		c.showCerts()
+		return
+	}
+
+	flash.Success("Email with configuration and 2FA sent to " + found.Details.Email)
+	flash.Store(&c.Controller)
+	c.showCerts()
+}
+
 func validateCertParams(cert NewCertParams) map[string]map[string]string {
 	valid := validation.Validation{}
 	b, err := valid.Valid(&cert)

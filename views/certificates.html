@@ -181,7 +181,9 @@
                       <div class="modal-footer justify-content-between">
                         <button type="button" class="btn btn-default pull-left" data-dismiss="modal">Close</button>
                         <button type="submit" class="btn btn-primary copy-btn copy-modal-data-btn" style="width: 135px;">Copy</button>
-                        <button type="button" class="btn btn-success send-email-with-qr-btn" style="width: 135px;">Send Email</button>
+                        {{ if and (eq (printf "%d" $.SettingsC.FuncMode) "1") (eq .EntryType "V") (ne .Details.Name "") (ne .Details.TFAName "") (ne .Details.TFAName "none") }}
+                        <a href="{{urlfor "CertificatesController.SendEmail" ":key" .Details.Name ":serial" .Serial ":tfaname" .Details.TFAName}}" class="btn btn-success" title="Send config and 2FA to {{ .Details.Email }}" style="width: 135px;">Send Email</a>
+                        {{end}}
                       </div>
                       </div>
                     </div>
@@ -352,50 +354,3 @@
 </div>
 {{end}}
 
-<script>
-// Attach a click event handler to the "Send Email" button
-$('.send-email-with-qr-btn').on('click', function () {
-  var $modal = $(this).closest('.modal');
-
-  // Extract the email address from the modal content (as before)
-  var emailAddress = $modal.find('.copy-details a[href^="mailto:"]').attr('href');
-  emailAddress = emailAddress.replace('mailto:', '');
-
-  // Extract all modal content (as before)
-  var content = '';
-  $modal.find('.copy-details').each(function () {
-    content += $(this).text().replace(/:\s/g, ': ') + '\n';
-  });
-  content = content.replace(/:\s\n/g, ': ');
-
-  // Extract additional details for the email body
-  var certName = $modal.find('.cert-name').text().trim();
-  var expirationDate = $modal.find('.exp-time').text();
-  var tfaName = $modal.find('.2fa-name').text();
-  var organisation = $modal.find('.reg-org').text().trim();
-
-  // Prepare the email subject
-  var emailSubject = 'Certificate Information for ' + certName;
-
-  // Prepare the email body using the template
-  var emailBody = `Dear ${certName},\n\n`
-    + `Below is your new VPN certificate details.\n\n`
-    + `Name: ${certName}\n`
-    + `Two Factor Authentication (2FA) name(if applicable): ${tfaName}\n`
-    + `The Certificate is registered on e-mail ${emailAddress} and will be valid until ${expirationDate}.\n\n`
-    + `Please take care.\n\n`
-    + `Sincerely yours, ${organisation} engineering team.`;
-
-  // Encode the email body as a URI component
-  var encodedEmailBody = encodeURIComponent(emailBody);
-
-  // Prepare the mailto link with the encoded email address, subject, and body
-  var mailtoLink = 'mailto:' + encodeURIComponent(emailAddress) +
-    '?subject=' + encodeURIComponent(emailSubject) +
-    '&body=' + encodedEmailBody;
-
-  // Open the default email client with the mailto link
-  window.location.href = mailtoLink;
-});
-  </script>
-  
