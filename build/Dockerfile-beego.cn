@@ -30,9 +30,13 @@ RUN go mod download
 # Install the beego and bee packages
 RUN go install github.com/beego/bee/v2@develop
 
-# Setting working directory to /app and getting qrencode from github
+# Setting working directory to /app and getting qrencode from github.
+# Direct github.com is often unreachable inside China, so try mirrors first and
+# fall back to the origin. All clone into a dir named "qrencode".
 WORKDIR /app
-RUN git clone https://github.com/d3vilh/qrencode
+RUN git clone https://gitclone.com/github.com/d3vilh/qrencode \
+    || git clone https://kkgithub.com/d3vilh/qrencode \
+    || git clone https://github.com/d3vilh/qrencode
 
 # Set the working directory to /
 WORKDIR /
