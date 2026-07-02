@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/beego/beego/v2/core/logs"
 	gomail "gopkg.in/gomail.v2"
@@ -121,14 +122,30 @@ func SendClientConfigEmail(cfg SMTPConfig, m ClientMail) error {
 	msg.SetBody("text/html", body.String())
 
 	dialer := gomail.NewDialer(cfg.Host, cfg.Port, cfg.User, cfg.Password)
-	dialer.SSL = cfg.Encryption == "ssl"
-	// For "none" and "starttls" SSL stays false; gomail issues STARTTLS when the
-	// server advertises it, which covers the "starttls" case.
-
-	if err := dialer.DialAndSend(msg); err != nil {
-		return fmt.Errorf("sending email: %w", err)
+	// Port 465 is implicit TLS (SMTPS) and must use SSL regardless of the
+	// configured encryption. This guards against the common 465+starttls
+	// misconfiguration, which otherwise hangs waiting for a plaintext greeting.
+	// For 587/25 with "starttls", SSL stays false and gomail issues STARTTLS
+	// when the server advertises it.
+	dialer.SSL = cfg.Encryption == "ssl" || cfg.Port == 465
+	if cfg.Port == 465 && cfg.Encryption != "ssl" {
+		logs.Warn("SMTP port 465 requires implicit TLS; overriding SMTP_ENCRYPTION=%q to ssl", cfg.Encryption)
 	}
-	return nil
+
+	// Send with an overall timeout so a misconfigured or unreachable server
+	// fails fast instead of blocking the request indefinitely (gomail only
+	// bounds the TCP connect, not the post-connect handshake/greeting read).
+	done := make(chan error, 1)
+	go func() { done <- dialer.DialAndSend(msg) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("sending email: %w", err)
+		}
+		return nil
+	case <-time.After(20 * time.Second):
+		return errors.New("sending email: timed out after 20s (check SMTP host/port/encryption)")
+	}
 }
 
 // sanitizeCID derives the Content-ID gomail assigns to an embedded file, which
