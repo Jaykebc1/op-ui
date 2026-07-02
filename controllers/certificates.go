@@ -20,7 +20,7 @@ import (
 type NewCertParams struct {
 	Name       string `form:"Name" valid:"Required;"`
 	Staticip   string `form:"staticip"`
-	Passphrase string `form:"passphrase"`
+	Passphrase string `form:"passphrase" valid:"Required;"`
 	ExpireDays string `form:"EasyRSACertExpire"`
 	Email      string `form:"EasyRSAReqEmail"`
 	Country    string `form:"EasyRSAReqCountry"`
@@ -30,6 +30,7 @@ type NewCertParams struct {
 	OrgUnit    string `form:"EasyRSAReqOu"`
 	TFAName    string `form:"TFAName"`
 	TFAIssuer  string `form:"TFAIssuer"`
+	SendMail   string `form:"SendMail"`
 }
 
 type CertificatesController struct {
@@ -139,13 +140,22 @@ func (c *CertificatesController) Post() {
 		if vMap := validateCertParams(cParams); vMap != nil {
 			c.Data["validation"] = vMap
 		} else {
-			logs.Info("Controller: Creating certificate with parameters: Name=%s, Staticip=%s, Passphrase=%s, ExpireDays=%s, Email=%s, Country=%s, Province=%s, City=%s, Org=%s, OrgUnit=%s, TFAName=%s, TFAIssuer=%s", cParams.Name, cParams.Staticip, cParams.Passphrase, cParams.ExpireDays, cParams.Email, cParams.Country, cParams.Province, strconv.Quote(cParams.City), strconv.Quote(cParams.Org), strconv.Quote(cParams.OrgUnit), cParams.TFAName, cParams.TFAIssuer)
+			logs.Info("Controller: Creating certificate with parameters: Name=%s, Staticip=%s, PassphraseSet=%t, ExpireDays=%s, Email=%s, Country=%s, Province=%s, City=%s, Org=%s, OrgUnit=%s, TFAName=%s, TFAIssuer=%s", cParams.Name, cParams.Staticip, cParams.Passphrase != "", cParams.ExpireDays, cParams.Email, cParams.Country, cParams.Province, strconv.Quote(cParams.City), strconv.Quote(cParams.Org), strconv.Quote(cParams.OrgUnit), cParams.TFAName, cParams.TFAIssuer)
 			if err := lib.CreateCertificate(cParams.Name, cParams.Staticip, cParams.Passphrase, cParams.ExpireDays, cParams.Email, cParams.Country, cParams.Province, strconv.Quote(cParams.City), strconv.Quote(cParams.Org), strconv.Quote(cParams.OrgUnit), cParams.TFAName, cParams.TFAIssuer); err != nil {
 				logs.Error(err)
 				flash.Error(err.Error())
 				flash.Store(&c.Controller)
 			} else {
 				flash.Success("Success! Certificate for the name \"" + cParams.Name + "\" has been created")
+				// Optionally email the .ovpn config and OTP to the client (passphrase is never emailed).
+				if cParams.SendMail == "1" && cParams.Email != "" {
+					if err := c.emailClientConfig(cParams.Name, cParams.Email, cParams.TFAName); err != nil {
+						logs.Error(err)
+						flash.Warning("Certificate created, but email was not sent: " + err.Error())
+					} else {
+						flash.Success("Configuration and OTP emailed to " + cParams.Email)
+					}
+				}
 				flash.Store(&c.Controller)
 			}
 		}
@@ -265,61 +275,56 @@ func (c *CertificatesController) SendEmail() {
 		return
 	}
 
+	if err := c.emailClientConfig(name, found.Details.Email, tfaname); err != nil {
+		logs.Error(err)
+		flash.Error("Failed to send email: " + err.Error())
+	} else {
+		flash.Success("Email with configuration and 2FA sent to " + found.Details.Email)
+	}
+	flash.Store(&c.Controller)
+	c.showCerts()
+}
+
+// emailClientConfig regenerates the .ovpn, recovers the OTP secret (for 2FA
+// users) and emails the config to the recipient. The passphrase is never
+// included; it is delivered out of band (e.g. via Lark).
+func (c *CertificatesController) emailClientConfig(name, recipient, tfaname string) error {
 	smtpCfg, err := lib.LoadSMTPConfig()
 	if err != nil {
-		logs.Error(err)
-		flash.Error(err.Error())
-		flash.Store(&c.Controller)
-		c.showCerts()
-		return
+		return err
 	}
 
 	// Regenerate the .ovpn so the attachment is always current.
 	keysPath := filepath.Join(state.GlobalCfg.OVConfigPath, "pki/issued")
 	ovpnPath, err := c.saveClientConfig(keysPath, name)
 	if err != nil {
-		logs.Error(err)
-		flash.Error("Could not generate .ovpn: " + err.Error())
-		flash.Store(&c.Controller)
-		c.showCerts()
-		return
-	}
-
-	// Recover the OTP secret and rebuild the otpauth URL.
-	issuer := ""
-	ovc := models.OVClientConfig{Profile: "default"}
-	if err := ovc.Read("Profile"); err == nil {
-		issuer = ovc.TFAIssuer
-	}
-	secret, otpURL, err := lib.GetOATHSecret(state.GlobalCfg.OVConfigPath, tfaname, issuer)
-	if err != nil {
-		logs.Error(err)
-		flash.Error("Could not read 2FA secret: " + err.Error())
-		flash.Store(&c.Controller)
-		c.showCerts()
-		return
+		return err
 	}
 
 	mail := lib.ClientMail{
-		To:         found.Details.Email,
+		To:         recipient,
 		ClientName: name,
 		OVPNPath:   ovpnPath,
-		Has2FA:     true,
-		QRPath:     filepath.Join(state.GlobalCfg.OVConfigPath, "clients", name+".png"),
-		OTPSecret:  secret,
-		OTPAuthURL: otpURL,
-	}
-	if err := lib.SendClientConfigEmail(smtpCfg, mail); err != nil {
-		logs.Error(err)
-		flash.Error("Failed to send email: " + err.Error())
-		flash.Store(&c.Controller)
-		c.showCerts()
-		return
 	}
 
-	flash.Success("Email with configuration and 2FA sent to " + found.Details.Email)
-	flash.Store(&c.Controller)
-	c.showCerts()
+	// Include the OTP QR and secret only for 2FA clients.
+	if tfaname != "" && tfaname != "none" {
+		issuer := ""
+		ovc := models.OVClientConfig{Profile: "default"}
+		if err := ovc.Read("Profile"); err == nil {
+			issuer = ovc.TFAIssuer
+		}
+		secret, otpURL, err := lib.GetOATHSecret(state.GlobalCfg.OVConfigPath, tfaname, issuer)
+		if err != nil {
+			return err
+		}
+		mail.Has2FA = true
+		mail.QRPath = filepath.Join(state.GlobalCfg.OVConfigPath, "clients", name+".png")
+		mail.OTPSecret = secret
+		mail.OTPAuthURL = otpURL
+	}
+
+	return lib.SendClientConfigEmail(smtpCfg, mail)
 }
 
 func validateCertParams(cert NewCertParams) map[string]map[string]string {

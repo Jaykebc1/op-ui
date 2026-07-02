@@ -116,7 +116,7 @@ func trim(s string) string {
 }
 
 func CreateCertificate(name string, staticip string, passphrase string, expiredays string, email string, country string, province string, city string, org string, orgunit string, tfaname string, tfaissuer string) error {
-	logs.Info("Lib: Creating certificate with parameters: name=%s, staticip=%s, passphrase=%s, expiredays=%s, email=%s, country=%s, province=%s, city=%s, org=%s, orgunit=%s, tfaname=%s, tfaissuer=%s", name, staticip, passphrase, expiredays, email, country, province, city, org, orgunit, tfaname, tfaissuer)
+	logs.Info("Lib: Creating certificate with parameters: name=%s, staticip=%s, passphraseSet=%t, expiredays=%s, email=%s, country=%s, province=%s, city=%s, org=%s, orgunit=%s, tfaname=%s, tfaissuer=%s", name, staticip, passphrase != "", expiredays, email, country, province, city, org, orgunit, tfaname, tfaissuer)
 	path := state.GlobalCfg.OVConfigPath + "/pki/index.txt"
 	haveip := staticip != ""
 	pass := passphrase != ""

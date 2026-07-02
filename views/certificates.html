@@ -263,11 +263,11 @@
             </div>
             {{end}}
     
-            <div class="form-group">
-              <label for="name">Passphrase (Optional)</label>
-              <input type="password" class="form-control" placeholder="Enter Password" id="password-input" id="passphrase" name="passphrase">
+            <div class="form-group has-success {{if field_error_exist .validation "Passphrase" }}has-error{{end}}">
+              <label for="password-input">Passphrase (Required)</label>
+              <input type="password" class="form-control" required placeholder="Enter Password" id="password-input" name="passphrase">
               <a href="#" class="password-control" title="Show or Hide Password"></a>
-              <span class="text-muted">Passphrase is used for privte key protection.</span>
+              <span class="text-muted">Encrypts the client private key. It is <b>not</b> emailed &mdash; send it to the user separately via Lark.</span>
             </div>
     
             <div class="form-group">
@@ -280,6 +280,15 @@
               <label for="name" title="EASYRSA_REQ_EMAIL">Client Email</label>
               <input type="email" class="form-control" placeholder="Client Email" id="EasyRSAReqEmail" name="EasyRSAReqEmail" value="{{ .EasyRSA.EasyRSAReqEmail }}">
               <span class="text-muted">The New Client e-mail address.</span>
+            </div>
+
+            <div class="form-group">
+              <div class="checkbox">
+                <label>
+                  <input type="checkbox" name="SendMail" value="1" checked> Email the .ovpn config and OTP to the client on creation
+                </label>
+              </div>
+              <span class="text-muted">Sends the .ovpn and 2FA OTP to the Client Email above. The passphrase is never emailed &mdash; share it via Lark.</span>
             </div>
 
             <div class="form-group">
