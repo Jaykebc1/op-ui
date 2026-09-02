@@ -119,6 +119,8 @@ func buildMessage(m ClientMail) (*gomail.Message, error) {
 	var body strings.Builder
 	body.WriteString(fmt.Sprintf("<p>Hello,</p><p>Your OpenVPN profile <b>%s</b> is attached as <code>%s.ovpn</code>.</p>",
 		html.EscapeString(m.ClientName), html.EscapeString(m.ClientName)))
+	body.WriteString(`<p>Install the OpenVPN Connect client for your device, then import the attached <code>.ovpn</code> profile. ` +
+		`Download: <a href="https://openvpn.net/connect-docs/operating-systems.html">https://openvpn.net/connect-docs/operating-systems.html</a></p>`)
 
 	if m.Has2FA {
 		body.WriteString("<p>This account is protected by two-factor authentication (2FA). " +
