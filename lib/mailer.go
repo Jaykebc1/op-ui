@@ -1,6 +1,8 @@
 package lib
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"html"
@@ -9,6 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sesv2"
+	sestypes "github.com/aws/aws-sdk-go-v2/service/sesv2/types"
 	"github.com/beego/beego/v2/core/logs"
 	gomail "gopkg.in/gomail.v2"
 )
@@ -67,6 +72,18 @@ func LoadSMTPConfig() (SMTPConfig, error) {
 	return cfg, nil
 }
 
+// mailFrom returns the sender address and display name used by all providers.
+// The address comes from SMTP_FROM (shared by the smtp and ses providers); the
+// name defaults to "OpenVPN".
+func mailFrom() (addr, name string) {
+	addr = strings.TrimSpace(os.Getenv("SMTP_FROM"))
+	name = os.Getenv("SMTP_FROM_NAME")
+	if name == "" {
+		name = "OpenVPN"
+	}
+	return addr, name
+}
+
 // ClientMail describes one client-config email to send.
 type ClientMail struct {
 	To         string // recipient email
@@ -78,20 +95,24 @@ type ClientMail struct {
 	OTPAuthURL string // otpauth:// URL (when Has2FA)
 }
 
-// SendClientConfigEmail sends the VPN client configuration (and, for 2FA users,
-// the OTP QR code and secret) to the user via SMTP.
-func SendClientConfigEmail(cfg SMTPConfig, m ClientMail) error {
+// buildMessage builds the MIME message (subject, HTML body, .ovpn attachment and,
+// for 2FA users, the embedded QR and secret). It is provider-agnostic.
+func buildMessage(m ClientMail) (*gomail.Message, error) {
 	if m.To == "" {
-		return errors.New("recipient email is empty")
+		return nil, errors.New("recipient email is empty")
+	}
+	from, fromName := mailFrom()
+	if from == "" {
+		return nil, errors.New("mail is not configured: SMTP_FROM is empty")
 	}
 
 	msg := gomail.NewMessage()
-	msg.SetAddressHeader("From", cfg.From, cfg.FromName)
+	msg.SetAddressHeader("From", from, fromName)
 	msg.SetHeader("To", m.To)
 	msg.SetHeader("Subject", fmt.Sprintf("Your OpenVPN configuration: %s", m.ClientName))
 
 	if _, err := os.Stat(m.OVPNPath); err != nil {
-		return fmt.Errorf("ovpn file not found: %w", err)
+		return nil, fmt.Errorf("ovpn file not found: %w", err)
 	}
 	msg.Attach(m.OVPNPath)
 
@@ -120,7 +141,40 @@ func SendClientConfigEmail(cfg SMTPConfig, m ClientMail) error {
 	}
 
 	msg.SetBody("text/html", body.String())
+	return msg, nil
+}
 
+// SendClientConfigEmail sends the VPN client configuration (and, for 2FA users,
+// the OTP QR code and secret) to the user. The transport is chosen by the
+// MAIL_PROVIDER env var: "smtp" (default) or "ses" (Amazon SES via the AWS SDK,
+// using the default credential chain — e.g. an EC2 instance role — so no SMTP
+// credentials are stored). The passphrase is never included.
+func SendClientConfigEmail(m ClientMail) error {
+	msg, err := buildMessage(m)
+	if err != nil {
+		return err
+	}
+
+	provider := strings.ToLower(strings.TrimSpace(os.Getenv("MAIL_PROVIDER")))
+	if provider == "" {
+		provider = "smtp"
+	}
+	switch provider {
+	case "smtp":
+		cfg, err := LoadSMTPConfig()
+		if err != nil {
+			return err
+		}
+		return sendSMTP(cfg, msg)
+	case "ses":
+		return sendSES(m.To, msg)
+	default:
+		return fmt.Errorf("invalid MAIL_PROVIDER %q (want smtp|ses)", provider)
+	}
+}
+
+// sendSMTP delivers the message over SMTP.
+func sendSMTP(cfg SMTPConfig, msg *gomail.Message) error {
 	dialer := gomail.NewDialer(cfg.Host, cfg.Port, cfg.User, cfg.Password)
 	// Port 465 is implicit TLS (SMTPS) and must use SSL regardless of the
 	// configured encryption. This guards against the common 465+starttls
@@ -146,6 +200,42 @@ func SendClientConfigEmail(cfg SMTPConfig, m ClientMail) error {
 	case <-time.After(20 * time.Second):
 		return errors.New("sending email: timed out after 20s (check SMTP host/port/encryption)")
 	}
+}
+
+// sendSES delivers the message through Amazon SES using SendEmail with a raw
+// MIME payload (so attachments and the embedded QR are preserved). AWS
+// credentials come from the default chain, which on EC2 resolves the instance
+// role via IMDS — no keys are stored. The region comes from AWS_REGION (or the
+// instance metadata when unset).
+func sendSES(to string, msg *gomail.Message) error {
+	var buf bytes.Buffer
+	if _, err := msg.WriteTo(&buf); err != nil {
+		return fmt.Errorf("building MIME message: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	var optFns []func(*config.LoadOptions) error
+	if region := strings.TrimSpace(os.Getenv("AWS_REGION")); region != "" {
+		optFns = append(optFns, config.WithRegion(region))
+	}
+	awsCfg, err := config.LoadDefaultConfig(ctx, optFns...)
+	if err != nil {
+		return fmt.Errorf("loading AWS config: %w", err)
+	}
+
+	client := sesv2.NewFromConfig(awsCfg)
+	_, err = client.SendEmail(ctx, &sesv2.SendEmailInput{
+		Destination: &sestypes.Destination{ToAddresses: []string{to}},
+		Content: &sestypes.EmailContent{
+			Raw: &sestypes.RawMessage{Data: buf.Bytes()},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("SES send: %w", err)
+	}
+	return nil
 }
 
 // sanitizeCID derives the Content-ID gomail assigns to an embedded file, which

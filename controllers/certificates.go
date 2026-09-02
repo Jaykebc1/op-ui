@@ -289,11 +289,6 @@ func (c *CertificatesController) SendEmail() {
 // users) and emails the config to the recipient. The passphrase is never
 // included; it is delivered out of band (e.g. via Lark).
 func (c *CertificatesController) emailClientConfig(name, recipient, tfaname string) error {
-	smtpCfg, err := lib.LoadSMTPConfig()
-	if err != nil {
-		return err
-	}
-
 	// Regenerate the .ovpn so the attachment is always current.
 	keysPath := filepath.Join(state.GlobalCfg.OVConfigPath, "pki/issued")
 	ovpnPath, err := c.saveClientConfig(keysPath, name)
@@ -324,7 +319,7 @@ func (c *CertificatesController) emailClientConfig(name, recipient, tfaname stri
 		mail.OTPAuthURL = otpURL
 	}
 
-	return lib.SendClientConfigEmail(smtpCfg, mail)
+	return lib.SendClientConfigEmail(mail)
 }
 
 func validateCertParams(cert NewCertParams) map[string]map[string]string {
