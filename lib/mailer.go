@@ -127,11 +127,17 @@ func buildMessage(m ClientMail) (*gomail.Message, error) {
 	if _, err := os.Stat(m.OVPNPath); err != nil {
 		return nil, fmt.Errorf("ovpn file not found: %w", err)
 	}
-	msg.Attach(m.OVPNPath)
+	// Name the attachment <env>-<client>.ovpn (without renaming the file on disk)
+	// so isolated environments are distinguishable in the recipient's downloads.
+	attachName := m.ClientName + ".ovpn"
+	if env != "" {
+		attachName = sanitizeFilePart(env) + "-" + attachName
+	}
+	msg.Attach(m.OVPNPath, gomail.Rename(attachName))
 
 	var body strings.Builder
-	body.WriteString(fmt.Sprintf("<p>Hello,</p><p>Your OpenVPN profile <b>%s</b> is attached as <code>%s.ovpn</code>.</p>",
-		html.EscapeString(m.ClientName), html.EscapeString(m.ClientName)))
+	body.WriteString(fmt.Sprintf("<p>Hello,</p><p>Your OpenVPN profile <b>%s</b> is attached as <code>%s</code>.</p>",
+		html.EscapeString(m.ClientName), html.EscapeString(attachName)))
 	if env != "" {
 		body.WriteString(fmt.Sprintf("<p>Environment: <b>%s</b> — this profile connects only to the <b>%s</b> environment. Please use the matching profile for each environment.</p>",
 			html.EscapeString(env), html.EscapeString(env)))
@@ -255,6 +261,21 @@ func sendSES(to string, msg *gomail.Message) error {
 		return fmt.Errorf("SES send: %w", err)
 	}
 	return nil
+}
+
+// sanitizeFilePart makes an environment label safe to embed in a filename by
+// replacing anything other than [A-Za-z0-9._-] with a dash.
+func sanitizeFilePart(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			return r
+		case r == '.' || r == '_' || r == '-':
+			return r
+		default:
+			return '-'
+		}
+	}, s)
 }
 
 // sanitizeCID derives the Content-ID gomail assigns to an embedded file, which
