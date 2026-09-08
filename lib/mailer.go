@@ -72,6 +72,13 @@ func LoadSMTPConfig() (SMTPConfig, error) {
 	return cfg, nil
 }
 
+// mailEnvLabel returns an optional environment/VPC label (from OPENVPN_ENV) that
+// is added to the subject and body so recipients can tell isolated environments
+// apart. Empty when unset.
+func mailEnvLabel() string {
+	return strings.TrimSpace(os.Getenv("OPENVPN_ENV"))
+}
+
 // mailFrom returns the sender address and display name used by all providers.
 // The address comes from SMTP_FROM (shared by the smtp and ses providers); the
 // name defaults to "OpenVPN".
@@ -106,10 +113,16 @@ func buildMessage(m ClientMail) (*gomail.Message, error) {
 		return nil, errors.New("mail is not configured: SMTP_FROM is empty")
 	}
 
+	env := mailEnvLabel()
+	subject := fmt.Sprintf("Your OpenVPN configuration: %s", m.ClientName)
+	if env != "" {
+		subject = fmt.Sprintf("[%s] %s", env, subject)
+	}
+
 	msg := gomail.NewMessage()
 	msg.SetAddressHeader("From", from, fromName)
 	msg.SetHeader("To", m.To)
-	msg.SetHeader("Subject", fmt.Sprintf("Your OpenVPN configuration: %s", m.ClientName))
+	msg.SetHeader("Subject", subject)
 
 	if _, err := os.Stat(m.OVPNPath); err != nil {
 		return nil, fmt.Errorf("ovpn file not found: %w", err)
@@ -119,6 +132,10 @@ func buildMessage(m ClientMail) (*gomail.Message, error) {
 	var body strings.Builder
 	body.WriteString(fmt.Sprintf("<p>Hello,</p><p>Your OpenVPN profile <b>%s</b> is attached as <code>%s.ovpn</code>.</p>",
 		html.EscapeString(m.ClientName), html.EscapeString(m.ClientName)))
+	if env != "" {
+		body.WriteString(fmt.Sprintf("<p>Environment: <b>%s</b> — this profile connects only to the <b>%s</b> environment. Please use the matching profile for each environment.</p>",
+			html.EscapeString(env), html.EscapeString(env)))
+	}
 	body.WriteString(`<p>Install the OpenVPN Connect client for your device, then import the attached <code>.ovpn</code> profile. ` +
 		`Download: <a href="https://openvpn.net/connect-docs/operating-systems.html">https://openvpn.net/connect-docs/operating-systems.html</a></p>`)
 
